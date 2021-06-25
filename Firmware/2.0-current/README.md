@@ -1,7 +1,7 @@
 ### Firmware version 2.0
 ---
 
-_REV B_ and up kits are flashed with this firmware.
+_REV B, C and D_ kits are flashed with this firmware.
 
 This is a major firmware update after learning the internals of the original SB2.0 firmware. 
 
