@@ -1,0 +1,1054 @@
+; ***********************************************************************************
+
+; 	LABS BlasterBoard sound card firmware
+;	Copyright (C) 2021 Jevgenijs Ribalko (LABS)
+
+;	This program is free software: you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation, either version 3 of the License, or
+;	(at your option) any later version.
+
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+
+;	You should have received a copy of the GNU General Public License
+;	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+; ***********************************************************************************
+
+; The behaviour of commands below taken from disassembled firmware of SB2.0.
+
+; ------------------------------------------------------------------------------
+;	Empty command (CLR DSP_BUSY in SB 2.01)
+; ------------------------------------------------------------------------------
+Cmd_00_Empty:
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Return DSP status
+; ------------------------------------------------------------------------------
+Cmd_04_DSPStatus:
+
+	ldi	A, 0x21 ; For SB 2.0
+	call	DSP_Write
+	
+	; if DMA operation is in progress - start Timer here
+	sbic	DSPSR, DMA_ACTIVE_F
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+; 	Sets DSP into infinite loop
+; ------------------------------------------------------------------------------
+Cmd_08_HaltDSP:
+	
+_cmd_08_loop:
+	rjmp	_cmd_08_loop
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Direct output to DAC
+; ------------------------------------------------------------------------------
+Cmd_10_OutPCMDirect:
+	
+	; Read sample value
+	call	DSP_Read
+	mov	DAC_VAL, A
+
+	; Write it to DAC
+	call	DAC_Write
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	SB16 Begin 8-bit PCM single-cycle DMA (used by FreddyV's modm)
+; ------------------------------------------------------------------------------
+Cmd_C0_OutPCMSingleDMA:
+	call	DSP_Read	; Read SB16 mode 
+	; 10h = signed mono data
+	; any other = unsigned mono data
+	cpi	A, 0x10
+	brne	Cmd_14_OutPCMSingleDMA
+	sbi	DSPSR, SIGNEDF
+	jmp	_OutPCMSingleDMA
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Begin 8-bit PCM single-cycle DMA
+; ------------------------------------------------------------------------------
+Cmd_14_OutPCMSingleDMA:
+	cbi 	DSPSR, SIGNEDF	; Set signed flag to 0 (unsigned)
+_OutPCMSingleDMA:
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	cbi	DSPSR, AINITF	; Not using auto-init
+	cbi	DSPSR, RECF	; Not recording
+	cbi	DSPSR, REFF	; Always 0 for PCM
+	
+	ldi	FORMAT, FMT_PCM
+	clr	NIBBLE		; Always 0 for PCM
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Single-cycle output block of ADPCM 8:2 samples 
+; ------------------------------------------------------------------------------
+Cmd_16_OutADPCM82Single:
+	
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	cbi	DSPSR, SILENCEF
+	cbi	DSPSR, AINITF
+	cbi	DSPSR, RECF
+	cbi	DSPSR, SIGNEDF
+	
+	cbi	DSPSR, REFF	; No reference byte
+	
+	ldi	FORMAT, FMT_ADPCM82
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+	
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Single-cycle output block of ADPCM 8:2 samples starting with ref. byte
+; ------------------------------------------------------------------------------
+Cmd_17_OutADPCM82SingleRef:
+	
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	cbi	DSPSR, SILENCEF
+	cbi	DSPSR, AINITF
+	cbi	DSPSR, RECF
+	cbi	DSPSR, SIGNEDF
+	
+	sbi	DSPSR, REFF	; 1st byte is a reference byte
+	
+	ldi	FORMAT, FMT_ADPCM82
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	SB16 Begin 8-bit PCM auto-init DMA (for FreddyV's modm)
+; ------------------------------------------------------------------------------
+Cmd_C6_OutPCMAuto:
+	call	DSP_Read	; Read SB16 mode 
+	push	A
+	
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	pop	A
+	; 10h = signed mono data
+	; any other = unsigned mono data
+	cpi	A, 0x10
+	brne	Cmd_1C_OutPCMAuto
+	sbi	DSPSR, SIGNEDF	; signed if 0x10
+	rjmp	_OutPCMAuto
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Begin 8-bit PCM auto-init transfer
+; ------------------------------------------------------------------------------
+Cmd_1C_OutPCMAuto:
+	cbi	DSPSR, SIGNEDF	; unsigned
+_OutPCMAuto:	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	cbi	DSPSR, RECF	; Playback
+	
+	ldi	FORMAT, FMT_PCM
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Auto-init output block of ADPCM 8:2 samples
+;
+;	Documented in ThunderBoard
+; ------------------------------------------------------------------------------
+Cmd_1E_OutADPCM82AutoNoRef:	
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	cbi	DSPSR, RECF	; Playback
+	cbi	DSPSR, SIGNEDF
+		
+	cbi	DSPSR, REFF
+	ldi	FORMAT, FMT_ADPCM82
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+		
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Auto-init output block of ADPCM 8:2 samples starting with ref. byte
+; ------------------------------------------------------------------------------
+Cmd_1F_OutADPCM82AutoRef:
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	cbi	DSPSR, RECF	; Playback
+	cbi	DSPSR, SIGNEDF
+	
+	sbi	DSPSR, REFF
+	ldi	FORMAT, FMT_ADPCM82
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Fake direct input from ADC
+; ------------------------------------------------------------------------------
+Cmd_20_InPCMDirect:
+
+	ldi	A, 0x80
+	call	DSP_Write
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Fake single-cycle DMA input
+; ------------------------------------------------------------------------------
+Cmd_99_InPCMSingleHS:
+Cmd_24_InPCMSingle:
+
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	cbi	DSPSR, AINITF	; Single-cycle
+	sbi	DSPSR, RECF	; Recording
+	cbi	DSPSR, REFF
+	cbi	DSPSR, SIGNEDF
+	
+	ldi	FORMAT, FMT_PCM
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Fake auto-init DMA input (will always be 0xFF)
+; ------------------------------------------------------------------------------
+Cmd_98_InPCMAutoHS:
+Cmd_2C_InPCMAuto:
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	sbi	DSPSR, RECF	; Recording
+	cbi	DSPSR, REFF
+	cbi	DSPSR, SIGNEDF
+	
+	ldi	FORMAT, FMT_PCM
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+
+; ------------------------------------------------------------------------------
+;	Fake MIDI I/O
+; ------------------------------------------------------------------------------
+Cmd_30_MIDI_Poll:
+Cmd_31_MIDI_Int:
+Cmd_38_MIDI_Output:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	rjmp	Cmd_Start_Timer
+
+	call	DSP_Read
+	jmp	DSP_Idle
+	; NOT REACHED
+
+Cmd_32:
+Cmd_33:
+Cmd_34_UART_MIDI_Poll:
+Cmd_35_UART_MIDI_Int:
+Cmd_36_UART_MIDI_Poll_Time:
+Cmd_37_UART_MIDI_Int_Time:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	rjmp	Cmd_Start_Timer
+
+	call	DSP_Read
+	rjmp	Cmd_34_UART_MIDI_Poll	; Can be aborted only by reset
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+; ------------------------------------------------------------------------------
+Cmd_Start_Timer:
+	call	T1_Start
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Set DMA time constant
+; ------------------------------------------------------------------------------
+Cmd_40_SetTimeConst:
+	
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+
+	call	DSP_Read	; Read time constant
+
+	; A = Time constant
+	cpi	A, 0xF1		; Max is 62500Hz (0xF0)
+	brsh	_cmd40_setmax
+
+	cpi	A, 0x06
+	brlo	_cmd40_setmin	; Min is 4000Hz (0x06)
+	
+	call 	T1_SetSpeed
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+_cmd40_setmax:
+	ldi	A, 0xF0
+	call	T1_SetSpeed
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+_cmd40_setmin:
+	ldi	A, 0x06
+	call	T1_SetSpeed
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Set DMA auto-init block size
+; ------------------------------------------------------------------------------
+Cmd_48_SetAutoBlockSize:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+	
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+Cmd_50_52_54_56:
+	
+	sbic	DSPSR, DMA_ACTIVE_F
+	rjmp	Cmd_Start_Timer
+	
+	call	T1_Stop
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+Cmd_51_53_55_57:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	rjmp	Cmd_Start_Timer
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+; ------------------------------------------------------------------------------
+Cmd_64_to_67_DMA_Status:
+
+	sbis	DSPSR, DMA_ACTIVE_F
+	jmp	DSP_Idle
+	
+	ldi	A, 0x21
+	call	DSP_Write
+	
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+; ------------------------------------------------------------------------------
+Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled:
+
+	sbis	DSPSR, DMA_ACTIVE_F
+	jmp	DSP_Idle	
+
+_cmd_68_loop:	
+	rjmp	_cmd_68_loop
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Single-cycle output block of ADPCM 8:4 samples
+; ------------------------------------------------------------------------------
+Cmd_74_OutADPCM84Single:
+
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	cbi	DSPSR, SILENCEF
+	cbi	DSPSR, AINITF
+	cbi	DSPSR, RECF
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	cbi	DSPSR, REFF	; No reference byte
+	ldi	FORMAT, FMT_ADPCM84
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Single-cycle output block of ADPCM 8:4 samples starting with ref. byte
+; ------------------------------------------------------------------------------
+Cmd_75_OutADPCM84SingleRef:
+
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	cbi	DSPSR, SILENCEF
+	cbi	DSPSR, AINITF
+	cbi	DSPSR, RECF
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	sbi	DSPSR, REFF	; Has reference byte
+	ldi	FORMAT, FMT_ADPCM84
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Single-cycle output block of ADPCM 8:3 samples
+; ------------------------------------------------------------------------------
+Cmd_76_OutADPCM83Single:
+
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	cbi	DSPSR, SILENCEF
+	cbi	DSPSR, AINITF
+	cbi	DSPSR, RECF
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	cbi	DSPSR, REFF	; No reference byte
+	ldi	FORMAT, FMT_ADPCM83
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Single-cycle output block of ADPCM 8:3 samples starting with ref. byte
+; ------------------------------------------------------------------------------
+Cmd_77_OutADPCM83SingleRef:
+
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	cbi	DSPSR, SILENCEF
+	cbi	DSPSR, AINITF
+	cbi	DSPSR, RECF
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	sbi	DSPSR, REFF	; Has reference byte
+	ldi	FORMAT, FMT_ADPCM83
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Auto-init output block of ADPCM 8:4 samples
+;
+;	Documented in ThunderBoard
+; ------------------------------------------------------------------------------
+Cmd_7C_OutADPCM84AutoNoRef:
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	cbi	DSPSR, RECF	; Playback
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	cbi	DSPSR, REFF	; No ref
+	ldi	FORMAT, FMT_ADPCM84
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Auto-init output block of ADPCM 8:4 samples starting with ref. byte
+; ------------------------------------------------------------------------------
+Cmd_7D_OutADPCM84AutoRef:
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	cbi	DSPSR, RECF	; Playback
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	sbi	DSPSR, REFF	; Has ref byte
+	ldi	FORMAT, FMT_ADPCM84
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Auto-init output block of ADPCM 8:3 samples
+;
+;	Documented in ThunderBoard
+; ------------------------------------------------------------------------------
+Cmd_7E_OutADPCM83AutoNoRef:
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	cbi	DSPSR, RECF	; Playback
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	cbi	DSPSR, REFF	; No ref
+	ldi	FORMAT, FMT_ADPCM83
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Auto-init output block of ADPCM 8:4 samples starting with ref. byte
+; ------------------------------------------------------------------------------
+Cmd_7F_OutADPCM83AutoRef:
+	
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init mode
+	cbi	DSPSR, RECF	; Playback
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	sbi	DSPSR, REFF	; Has ref byte
+	ldi	FORMAT, FMT_ADPCM83
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	OUTPUT SILENCE FOR A GIVEN BLOCK SIZE
+; ------------------------------------------------------------------------------
+Cmd_80_OutSilence:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	rjmp	Cmd_Start_Timer
+	
+	; Read DMA block size
+	call	DSP_Read
+	mov	BLKSIZEL, A
+	call	DSP_Read
+	mov	BLKSIZEH, A
+	
+	; Load byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+	
+	sbi	DSPSR, SILENCEF		; Set silence flag
+	cbi	DSPSR, AINITF		; No auto-init
+	cbi	DSPSR, RECF		; Playback
+	cbi	DSPSR, SIGNEDF	; unsigned
+
+	ldi	FORMAT, FMT_PCM
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;		START HIGH-SPEED 8-BIT DMA AUTO-INIT
+; ------------------------------------------------------------------------------
+Cmd_90_OutPCMAutoHS:
+
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	sbi	DSPSR, AINITF	; Use auto-init
+	cbi	DSPSR, RECF	; Playback
+
+	ldi	FORMAT, FMT_PCM
+	clr	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+
+_cmd90_loop:
+	rjmp	_cmd90_loop
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;		START HIGH-SPEED 8-BIT DMA SINGLE-CYCLE
+; ------------------------------------------------------------------------------
+Cmd_91_OutPCMSingleHS:
+
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	cbi	DSPSR, AINITF	; Not using auto-init
+	cbi	DSPSR, RECF
+
+	ldi	FORMAT, FMT_PCM
+	clr 	NIBBLE
+	
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+
+	call	T1_Reset
+	call	T1_Start
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;		PAUSE DMA TRANSFER
+; ------------------------------------------------------------------------------
+Cmd_D0_PauseDMA:
+	cbi	DSPSR, DMA_ACTIVE_F	; Clear DMA active flag
+	call	T1_Stop
+
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;		SPEAKER ON
+; ------------------------------------------------------------------------------
+Cmd_D1_SpeakerOn:
+	
+	sbi	DSPSR, SPKRF	; Set speaker flag ON
+	ldi	DAC_VAL, 0x80
+	call	DAC_Write
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;		SPEAKER OFF
+; ------------------------------------------------------------------------------
+Cmd_D3_SpeakerOff:
+	
+	cbi	DSPSR, SPKRF	; Clear speaker flag = OFF
+	call	DAC_Write
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;		RESUME DMA TRANSFER
+; ------------------------------------------------------------------------------
+Cmd_D4_ResumeDMA:
+	sbi	DSPSR, DMA_ACTIVE_F	; Set DMA active flag
+	call	T1_Start
+
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;		GET SPEAKER STATUS
+; ------------------------------------------------------------------------------
+Cmd_D8_GetSpeakerStatus:
+	push	A
+	
+	clr	A
+	sbic	DSPSR, SPKRF
+	dec	A		; 11111111 if ON
+	
+	call	DSP_Write
+	
+	pop	A
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;		STOP AUTO-INIT DMA TRANSFER AFTER CURRENT BLOCK
+; ------------------------------------------------------------------------------
+Cmd_DA_CancelDMA:
+	cbi	DSPSR, AINITF	; Cancel auto-init
+	cbi	DSPSR, DMA_ACTIVE_F	; Clear DMA active flag
+
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	-= TB =- Check communication
+; ------------------------------------------------------------------------------
+Cmd_E0_CheckCommunication:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+	
+	call	DSP_Read
+
+	; A = val to complement
+	com	A
+	nop
+	nop
+	
+	call	DSP_Write
+
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Get SB DSP version
+; ------------------------------------------------------------------------------
+Cmd_E1_GetDSPVersion:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+	
+	push	A
+	
+	ldi	A, DSP_VER_MAJOR
+	call	DSP_Write
+	nop
+	nop
+	ldi	A, DSP_VER_MINOR
+	call	DSP_Write
+	
+	pop	A
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Acknowledge DMA (used by test-sbc.exe)
+; 	UNIMPLEMENTED (see command jump table in dsp.aa)
+; ------------------------------------------------------------------------------
+Cmd_E2_AckDMA:
+	
+	rjmp	Cmd_F2_GenerateIRQ
+	; NOT REACHED
+		
+; ------------------------------------------------------------------------------
+;	Get DSP string
+; ------------------------------------------------------------------------------
+Cmd_E3_GetDSPString:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+	
+	push	A
+
+	ldi	ZH, high(dsp_string*2)
+	ldi	ZL, low(dsp_string*2)
+	
+_E3_next_char:
+	lpm	A, Z+
+	call	DSP_Write
+	tst	A
+	brne	_E3_next_char
+	
+	pop	A
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Write test register
+; ------------------------------------------------------------------------------
+Cmd_E4_WriteTestReg:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+	
+	call	DSP_Read
+	mov	REGVAL, A	; Just store it in REGVAl for E8 cmd
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+
+; ------------------------------------------------------------------------------
+;	Get BlasterBoard firmware version
+; ------------------------------------------------------------------------------
+Cmd_E5_GetFirmwareVersion:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+	
+	push	A
+	
+	ldi	A, FW_VER_MAJOR
+	call	DSP_Write
+	nop
+	nop
+	ldi	A, FW_VER_MINOR
+	call	DSP_Write
+	
+	pop	A
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Read test register
+; ------------------------------------------------------------------------------
+Cmd_E8_ReadTestReg:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+	
+	mov	A, REGVAL
+	call	DSP_Write
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Generate DAC test tone
+; ------------------------------------------------------------------------------
+Cmd_F0_StartTestTone:
+	
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+
+	ldi	A, high(tri*2)
+	mov	TTREGH, A
+	ldi	A, low(tri*2)
+	mov	TTREGL, A
+	
+	ldi	A, 0xD3	; ~22kHz
+	call	T1_SetSpeed
+
+	cbi	DSPSR, SILENCEF	; Clear silence flag
+	cbi	DSPSR, AINITF	; No auto-init
+	cbi	DSPSR, RECF	; Playback
+	cbi	DSPSR, SIGNEDF	; unsigned
+	
+	sbi	DSPSR, TESTTONEF	; Set test tone mode
+
+	call	T1_Reset
+	call	T1_Start
+
+_f0_loop:
+	jmp	_f0_loop
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Get DSP status 
+; ------------------------------------------------------------------------------
+Cmd_F1_DSPStatus:
+	
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+
+	clr	A	; Unimplemented yet
+	call	DSP_Write
+	
+_cmd_f1_loop:
+	rjmp	_cmd_f1_loop
+	
+	
+; ------------------------------------------------------------------------------
+;	-= TB =- Generate IRQ now
+; ------------------------------------------------------------------------------
+Cmd_F2_GenerateIRQ:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+
+	sbi	PORTB, IRQ_PIN	; Assert IRQ
+	nop
+	cbi	PORTB, IRQ_PIN
+	
+	jmp	DSP_Idle
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Return 2 bytes - 0DAh and 0F4h
+; ------------------------------------------------------------------------------
+Cmd_F4_GetDAF4:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+
+	ldi	A, 0xDA
+	call	DSP_Write
+	
+	ldi	A, 0xF4
+	call	DSP_Write
+
+	jmp	DSP_Idle
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Return checksum
+; ------------------------------------------------------------------------------
+Cmd_F8_Checksum:
+
+	sbic	DSPSR, DMA_ACTIVE_F
+	jmp	Cmd_Start_Timer
+
+	push	A
+	
+	mov	A, ZEROES
+	call	DSP_Write
+	
+	pop	A
+
+	jmp	DSP_Idle
+	; NOT REACHED

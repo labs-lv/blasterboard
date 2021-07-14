@@ -1,0 +1,680 @@
+; ***********************************************************************************
+
+; 	LABS BlasterBoard sound card firmware
+;	Copyright (C) 2021 Jevgenijs Ribalko (LABS)
+
+;	This program is free software: you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation, either version 3 of the License, or
+;	(at your option) any later version.
+
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+
+;	You should have received a copy of the GNU General Public License
+;	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+; ***********************************************************************************
+
+; ------------------------------------------------------------------------------
+;	TIMER 1 interrupt
+; ------------------------------------------------------------------------------
+TIMER1_COMPA_vect:
+	push	D	
+	in	D, SREG	; Save status register
+	push	D
+
+	; Are we emulating input?
+	sbic	DSPSR, RECF
+	rjmp	_vect_input
+	
+	; Test tone?
+	sbic	DSPSR, TESTTONEF
+	rjmp	_vect_testtone
+
+	; Playing silence?
+	sbic	DSPSR, SILENCEF
+	rjmp	_vect_silence
+	
+	tst	FORMAT	; Is format PCM ?
+	brne	_vect_ADPCM
+
+; ------------------------------------------------------------------------------
+;	PCM playback
+; ------------------------------------------------------------------------------
+
+	sbic	DSPSR, REFF	; Do not read DMA data if REFF is set
+	rjmp	_pcm_ref
+	
+	; Read data from DMA data register
+	cbi	PORTC, RDDMA_PIN	; Open 574 register for reading
+	nop	; Allow data to set up
+	nop
+	in	DAC_VAL, PIND		; Read sample
+	nop
+	nop
+	sbi	PORTC, RDDMA_PIN	; Close 574
+	
+	; Convert signed to unsigned if needed
+	ldi	D, 0x80	
+	sbic	DSPSR, SIGNEDF	; Skip next if unsigned
+	eor	DAC_VAL, D
+	
+_pcm_ref:
+	cbi	DSPSR, REFF
+	
+	; Write it to DAC
+	call	DAC_Write
+	
+	; Make next DMA data request and latch it to external 74574 register
+	sbi	PORTC, DMAREQ_PIN	; Assert DREQ
+	cbi	PORTC, DMAREQ_PIN	
+	
+	rjmp	_vect_count_buf
+	; NOT REACHED 
+	
+; ------------------------------------------------------------------------------
+;	ADPCM playback
+;
+;	This section has individual code for every ADPCM format. It is faster
+;	this way. Still need optimization though.
+; ------------------------------------------------------------------------------
+_vect_ADPCM:
+
+	tst	NIBBLE
+	brne	_vect_write_nibble
+
+	; Nibble is 0
+	mov	PRE_VAL, DAC_VAL
+	call	DAC_WriteCur_ReadNew
+	; Now we have new DAC_VAL which can be a ref.byte or ADPCM data
+	
+	sbis	DSPSR, REFF
+	rjmp	_vect_new_ADPCM_byte
+
+	; Is a reference byte
+	
+	cbi	DSPSR, REFF	; Clear REFF
+	clr	ADPCM_STEP
+	
+ 	rjmp 	_vect_count_buf
+	; NOT REACHED
+	
+_vect_new_ADPCM_byte:
+
+	; Init values for new ADPCM byte decoding
+	mov	ADPCM_BYTE, DAC_VAL	; Fresh DAC_VAL is ADPCM data, save it
+	mov	DAC_VAL, PRE_VAL	; Set DAC_VAL to the last PCM sample
+	mov	NIBBLE, FORMAT		; Init nibble counter
+	rjmp	_vect_decode_nibble
+	; NOT REACHED
+
+_vect_write_nibble:
+	; Write current DAC_VAL to DAC
+	nop	; 5 nops - to align with DAC_WriteCur_ReadNew call above and
+	nop	; keep time between samples constant
+	nop
+	nop
+	nop
+	call 	DAC_Write
+	
+	; FALLTHROUGH
+	
+_vect_decode_nibble:
+
+	push	ADPCM_BYTE	; Save
+
+	cpi	FORMAT, FMT_ADPCM84
+	breq	_vect_decode_ADPCM84
+	
+	cpi	FORMAT, FMT_ADPCM83
+	breq	_vect_decode_ADPCM83
+	
+; ------------------------------------------------------------------------------
+; 	DECODE ADPCM 8:2
+; ------------------------------------------------------------------------------
+	push	A
+	push	B
+	push	C
+	push	D
+
+	; ADPCM data is in ADPCM_BYTE
+	; Current sample is in DAC_VAL
+
+	ldi	A, 1	; Fixed limit value for 8:2
+	mov	ADPCM_LIMIT, A
+
+	; Calculate nibble shift
+	mov	D, NIBBLE
+	lsl	D	
+	subi	D, 2
+
+	tst	D
+	breq	_vect_dec82_no_shift
+	
+	; Shift current nibble to LSBs
+_vect_dec82_next_shift:
+	lsr	ADPCM_BYTE
+	dec	D
+	brne	_vect_dec82_next_shift	
+
+_vect_dec82_no_shift:
+	mov	A, ADPCM_BYTE
+	andi	A, 0x03
+	mov	ADPCM_BYTE, A
+	andi	A, 0b00000001	; Drop the sign
+	mov	B, A		; Save for step calculation
+	
+	mov	C, ADPCM_BYTE
+	andi 	C, 0b00000010	; Extract sign
+
+	mov	D, ADPCM_STEP
+	inc	D	; +2 required for 8:2	
+	inc	D
+	
+	rjmp	_vect_decode_nibble_shift
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	DECODE ADPCM 8:4
+; ------------------------------------------------------------------------------
+_vect_decode_ADPCM84:
+	
+	push	A
+	push	B
+	push	C
+	push	D
+	
+	; ADPCM data is in ADPCM_BYTE
+	; Current sample is in DAC_VAL
+	
+	ldi	A, 5
+	mov	ADPCM_LIMIT, A
+	
+	cpi	NIBBLE, 2
+	brne	_vect_dec84_n1
+	
+	; *** Nibble is 2
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+	
+	; FALLTHROUGH
+	
+	; *** Nibble is 1
+_vect_dec84_n1:
+
+	mov	A, ADPCM_BYTE
+	andi	A, 0x0F
+	mov	ADPCM_BYTE, A
+	andi	A, 0b00000111	; Drop the sign
+	mov	B, A		; Save value for step calculation
+
+	mov	C, ADPCM_BYTE
+	andi 	C, 0b00001000	; Extract sign
+
+	mov	D, ADPCM_STEP
+	
+	rjmp	_vect_decode_nibble_shift
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	DECODE ADPCM 8:3
+; ------------------------------------------------------------------------------
+_vect_decode_ADPCM83:
+
+	push	A
+	push	B
+	push	C
+	push	D
+
+	; ADPCM data is in ADPCM_BYTE
+	; Current sample is in DAC_VAL
+
+	ldi	A, 3
+	mov	ADPCM_LIMIT, A
+
+	cpi	NIBBLE, 3
+	brne	_vect_dec83_n2
+
+	; *** Nibble is 3
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+
+	rjmp	_vect_dec83_n23
+	; NOT REACHED
+	
+_vect_dec83_n2:
+	cpi	NIBBLE, 2
+	brne	_vect_dec83_n1
+	
+	; *** Nibble is 2
+	lsr	ADPCM_BYTE
+	lsr	ADPCM_BYTE
+	
+_vect_dec83_n23:
+	mov	A, ADPCM_BYTE
+	andi	A, 0x07
+	mov	ADPCM_BYTE, A
+	andi	A, 0b00000011	; Drop the sign
+	mov	B, A		; Save for step calculation
+	
+	mov	C, ADPCM_BYTE
+	andi 	C, 0b00000100	; Extract sign
+	
+	mov	D, ADPCM_STEP
+
+	rjmp	_vect_decode_nibble_shift
+	
+	; *** Nibble is 1
+_vect_dec83_n1:
+
+	mov	A, ADPCM_BYTE
+	andi	A, 0x03
+	mov	ADPCM_BYTE, A
+	andi	A, 0b00000001	; Drop the sign
+	mov	B, A		; Save for step calculation
+	
+	mov	C, ADPCM_BYTE
+	andi 	C, 0b00000010	; Extract sign
+	
+	mov	D, ADPCM_STEP
+	
+; ------------------------------------------------------------------------------
+;	SHARED FOR ALL DECODERS
+; ------------------------------------------------------------------------------
+_vect_decode_nibble_shift:
+
+	; Shift A left for ADPCM_STEP bits
+	tst	D
+	breq	_vect_decode_no_shift
+	
+_vect_decode_next_shift:
+	lsl	A
+	dec	D
+	brne	_vect_decode_next_shift
+
+_vect_decode_no_shift:	
+	
+	; Here A has the delta value to add or subtract from DAC_VAL
+	; C holds the sign calulated previously
+	
+	tst	C	; Check if sign is 0 (-)
+	breq	_vect_decode_sub
+	
+	; Sign is +
+	add	DAC_VAL, A
+	brcc	_vect_decode_calc_step
+	; Saturate if overflowed
+	ldi	DAC_VAL, 0xFF
+	rjmp	_vect_decode_calc_step
+	; NOT REACHED
+	
+_vect_decode_sub:
+	; Sign is -
+	sub	DAC_VAL, A
+	brcc	_vect_decode_calc_step
+	; Saturate if underflowed
+	clr	DAC_VAL
+	
+_vect_decode_calc_step:
+	; Update ADPCM_STEP
+	; B has the delta value
+	cp	B, ADPCM_LIMIT	
+	brlo	_vect_decode_s1
+	cpi	ADPCM_STEP, 4
+	brsh	_vect_decode_s1
+	inc	ADPCM_STEP
+	rjmp	_vect_decode_done
+	; NOT REACHED
+	
+_vect_decode_s1:
+	tst	B
+	brne	_vect_decode_done
+	tst	ADPCM_STEP
+	breq	_vect_decode_done
+	dec	ADPCM_STEP
+	; FALLTHROUGH
+
+_vect_decode_done:
+	pop	D
+	pop	C
+	pop	B
+	pop	A
+
+	pop	ADPCM_BYTE	; Restore
+	
+	dec	NIBBLE
+	tst	NIBBLE
+	breq	_vect_count_buf
+	rjmp	_vect_exit
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Update block position
+; ------------------------------------------------------------------------------
+_vect_count_buf:
+	
+	; Decrease block counter
+	subi	BLKCNTL, 1
+	brcc	_vect_exit
+	subi	BLKCNTH, 1
+	brcc	_vect_exit
+	
+	; Block finished
+	
+	sbis	DSPSR, AINITF	; Skip next command if auto-init in progress
+	rjmp	_vect_single	; Goto single-cycle code
+	
+	; Reload byte counter
+	mov	BLKCNTL, BLKSIZEL
+	mov	BLKCNTH, BLKSIZEH
+
+	; Do interrupt request
+	sbi	PORTB, IRQ_PIN	; Assert Q on IRQ flip-flop
+	cbi	PORTB, IRQ_PIN	; Set IRQ pin back to idle 0 state
+	
+_vect_exit:	
+	pop	D
+	out	SREG, D
+	pop	D
+	
+	reti	; <============================= VECTOR END
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Single cycle playbeck end
+; ------------------------------------------------------------------------------
+_vect_single:
+	call	T1_Stop		; Stop playback
+
+	cbi	DSPSR, DMA_ACTIVE_F	; Clear DMA active flag
+
+	sbi	PORTB, IRQ_PIN	; Assert ISAIRQ on L-to-H transition
+	cbi	PORTB, IRQ_PIN	; Set IRQ pin to initial L state
+	
+	rjmp	_vect_exit
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	Input request processing
+; ------------------------------------------------------------------------------
+_vect_input:
+	cbi	PORTC, DMAREQ_PIN
+	nop
+	sbi	PORTC, DMAREQ_PIN	; Fire DMA request, will read 0xFF
+	nop
+	cbi	PORTC, DMAREQ_PIN
+	
+	rjmp	_vect_count_buf
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	Output silence
+; ------------------------------------------------------------------------------
+_vect_silence:
+	ldi	DAC_VAL, 0x80
+	call	DAC_Write	; Write current value to DAC
+	
+	rjmp	_vect_count_buf
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+; 	Output testtone
+; ------------------------------------------------------------------------------
+_vect_testtone:
+	push	ZH
+	push	ZL
+	
+	mov	ZH, TTREGH
+	mov	ZL, TTREGL
+	
+	lpm	DAC_VAL, Z
+	call	DAC_Write
+	
+	inc	TTREGL
+	
+	pop	ZL
+	pop	ZH
+	
+	rjmp	_vect_exit
+	; NOT REACHED
+	
+; ******************************************************************************
+
+; 				FUNCTIONS
+
+; ******************************************************************************
+	
+; ------------------------------------------------------------------------------
+;	Write & Read (for ADPCM playback only)
+; ------------------------------------------------------------------------------
+DAC_WriteCur_ReadNew: 
+
+	sbi	PORTC, DMAREQ_PIN	; Assert DREQ
+	nop
+	cbi	PORTC, DMAREQ_PIN
+	
+	call	DAC_Write	; Write current value to DAC
+
+	; Delay between DMA request and DMA read to compensate for ISA bus lagging
+	; on some machines with slow ISA bus speed
+
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	
+	; Read sample
+	cbi	PORTC, RDDMA_PIN	; Open 574 register for reading
+	
+	nop	; Allow data to set up
+	nop
+
+	in	DAC_VAL, PIND		; Read sample
+	nop
+	nop
+	
+	sbi	PORTC, RDDMA_PIN	; Close 574
+
+	; DAC_VAL holds a new sample now
+	ret
+	
+; ------------------------------------------------------------------------------
+;	WRITE 8-bit DATA to MCP4901 DAC over SPI
+;
+;	In:	DAC_VAL = Data
+;
+;	Out:	none
+; ------------------------------------------------------------------------------
+DAC_Write:
+	push	A
+	push	B
+	
+	; Output silence if SPKRF clear (speaker is OFF)
+	sbis	DSPSR, SPKRF
+	ldi	DAC_VAL, 0x80
+	
+	; Write sample to DAC-A
+	mov	A, DAC_VAL
+	swap	A
+	mov	B, A
+	
+	; High byte
+	andi	A, 0b00001111	
+	ori	A, 0b00110000	; 4901: 0; 0=unbuffered; 1=gain x1; 1=active
+	
+	; Low byte
+	andi	B, 0b11110000
+	
+	cbi	PORTB, SS_PIN	; Set LOW /SS
+
+	out	SPDR, A		; Write high byte
+_dacwr_w1:
+	in	A, SPSR		; Wait for operation to complete
+	sbrs	A, SPIF
+	rjmp	_dacwr_w1	
+
+	out	SPDR, B		; Write low byte
+_dacwr_w2:
+	in	A, SPSR		; Wait for operation to complete
+	sbrs	A, SPIF
+	rjmp	_dacwr_w2
+
+	sbi	PORTB, SS_PIN	; Set HI /SS (Update DAC)
+	
+	pop	B
+	pop	A
+	
+	ret
+	; NOT REACHED	
+	
+; ------------------------------------------------------------------------------
+;	INITIALIZE TIMER 1 WITH TIME CONSTANT
+;
+;	In:	A = Time constant
+;
+;	Out:	none
+; ------------------------------------------------------------------------------
+T1_SetSpeed:
+	push	A
+	push	B
+
+	clr	B
+	; Set mode 4 for 16-bit Timer 1 (set WGM12)
+	sbr	B, (1<<WGM12)	; Set
+	; CS1[2:0] = 0 		; Timer is not running
+	sts	TCCR1B, B
+	
+	; Calculate T1 constant from Sound Blaster constant
+	neg	A	; rate = 256 - rate
+	ldi	B, 20	
+	mul	A, B	; rate = rate * 20 (20 MHz)
+	
+	; Set compare A value
+	sts	OCR1AH, R1	; High byte of the result
+	sts	OCR1AL, R0	; Low byte of the result
+	
+	pop	B
+	pop	A
+	
+	ret
+	; NOT REACHED
+
+; ------------------------------------------------------------------------------
+;	RESET TIMER 1 TO 0
+; ------------------------------------------------------------------------------
+T1_Reset:
+	push	A
+
+	; Be sure TCCR1A is clear
+	clr	A
+	sts	TCCR1A, A
+	; Reset counter to 0
+	sts	TCNT1H, A
+	sts	TCNT1L, A
+
+	pop	A
+	ret
+	; NOT REACHED
+	
+	
+; ------------------------------------------------------------------------------
+;	START TIMER 1
+; ------------------------------------------------------------------------------
+T1_Start:
+	push	A
+	
+	; Set interrupt mask 
+	ldi	A, (1<<OCIE1A)
+	sts	TIMSK1, A
+	
+	lds	A, TCCR1B
+	cbr	A, (1<<CS12) | (1<<CS11)
+	sbr	A, (1<<CS10)	; Set x1 prescaler
+	sts	TCCR1B, A	; Run the timer
+	
+	pop	A
+	
+	ret
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	STOP TIMER 1
+; ------------------------------------------------------------------------------
+T1_Stop:
+	
+	push	A
+
+	lds	A, TCCR1B
+	cbr	A, (1<<CS10) | (1<<CS11) | (1<<CS12)	; Set no prescaler
+	sts	TCCR1B, A	; Stop timer
+
+	pop	A
+
+	; Clear interrupt mask 
+	sts	TIMSK1, ZEROES
+
+	ret
+	; NOT REACHED
+	

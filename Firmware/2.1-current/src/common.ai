@@ -1,0 +1,137 @@
+; ***********************************************************************************
+
+; 	LABS BlasterBoard sound card firmware
+;	Copyright (C) 2021 Jevgenijs Ribalko (LABS)
+
+;	This program is free software: you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation, either version 3 of the License, or
+;	(at your option) any later version.
+
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+
+;	You should have received a copy of the GNU General Public License
+;	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+; ***********************************************************************************
+
+; BlasterBoard firmware version
+.equ	FW_VER_MAJOR = 2
+.equ	FW_VER_MINOR = 1
+
+; ------------------------------------------------------------------------------
+;	CUSTOM REGISTER DEFINITIONS
+; ------------------------------------------------------------------------------
+
+; Test register value
+.def 	REGVAL	= R6	; Test register value
+
+; All 0
+.def	ZEROES	= R9
+
+; All 1
+.def	ONES	= R10
+
+; Registers for test tone data
+.def	TTREGH = R11
+.def	TTREGL = R12
+
+; Used for holding DMA block size (set by block size commands like 48h) 
+.def	BLKSIZEH = R13
+.def	BLKSIZEL = R14
+
+; SREG temp storage
+.def	SREGTMP = R15
+
+; General purpose registers
+.def 	A	= R16
+.def	B	= R17
+.def	C	= R18
+.def 	D 	= R19
+
+; ADPCM decoding registers
+.def	ADPCM_LIMIT 	= R5	
+.def	ADPCM_BYTE 		= R7		; Currently decoded ADPCM byte
+.def	PRE_VAL 		= R8		; Previous DAC_VAL
+.def	FORMAT 		= R20		; Playback mode
+						; 0 = PCM,
+						; 2 = ADPCM 8:2
+						; 3 = ADPCM 8:3
+						; 4 = ADPCM 8:4
+						
+.def 	NIBBLE 		= R21		; ADPCM nibble counter
+.def	ADPCM_STEP 		= R22		
+
+; Holds current position of DMA block
+.def	BLKCNTH = R23
+.def	BLKCNTL = R24
+	
+; Current DAC value
+.def	DAC_VAL	= R25
+
+; ------------------------------------------------------------------------------
+;	GLOBAL CONSTANTS
+; ------------------------------------------------------------------------------
+; ***********************************************************************************
+
+; 	LABS BlasterBoard sound card firmware
+;	Copyright (C) 2019 Jevgenijs Ribalko (LABS)
+
+;	This program is free software: you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation, either version 3 of the License, or
+;	(at your option) any later version.
+
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+
+;	You should have received a copy of the GNU General Public License
+;	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+; ***********************************************************************************
+
+; ADPCM formats
+.equ	FMT_ADPCM82	= 4
+.equ	FMT_ADPCM83	= 3
+.equ	FMT_ADPCM84	= 2
+.equ	FMT_PCM		= 0
+
+; DSP Version is 02.01 for SB 2.0 compatibility
+.equ	DSP_VER_MAJOR = 2
+.equ	DSP_VER_MINOR = 1
+
+; DSP local status register (IN / OUT commands compatible)
+.equ	DSPSR			= GPIOR0	
+
+.equ	AINITF		= 0	; Auto-init transfer in progress (0xDA clears this flag)
+.equ	SILENCEF 	= 1	; Silence output
+.equ	TESTTONEF 	= 2	; Test tone status
+.equ	SPKRF		= 3	; Speaker status
+.equ	RECF		= 4	; Recording emulation mode
+.equ	DMA_ACTIVE_F	= 5	; Set when DMA operation is active (Timer 1 is working)
+.equ 	SIGNEDF		= 6	; Signed=1/unsigned=0 flag
+.equ	REFF		= 7	; Used by ADPCM decoder to identify ref. byte
+
+; Pin definitions
+.equ	WRR_PIN		= PORTC0 ; Write value to 574 register on rising edge (OUT), act 0
+.equ	RDR_PIN		= PORTC1 ; Read value from 574 register on falling egde (OUT), act 0
+.equ	RDDMA_PIN		= PORTC2 ; DMA read data control (OUT), act 0
+.equ	WRST_PIN		= PORTC3 ; Write status (IN), act 0
+.equ	DMAREQ_PIN		= PORTC4 ; DMA Request (OUT), act 1
+.equ	RDST_PIN		= PORTC5 ; Read status (IN) act 1
+.equ	RESET_PIN		= PORTC6 ; System reset pin (IN), act 0
+
+.equ 	IRQ_PIN		= PORTB0 ; IRQ (out), act 1
+.equ	TX_PIN		= PORTB1 ; UART TX for debug (OUT)
+.equ	SS_PIN		= PORTB2 ; DAC chip select (OUT)
+.equ	MOSI_PIN		= PORTB3 ; DAC data out (OUT)
+.equ	MISO_PIN		= PORTB4 ; MISO (NC)
+.equ	SCK_PIN		= PORTB5 ; DAC clock out (OUT)
+
+
+
