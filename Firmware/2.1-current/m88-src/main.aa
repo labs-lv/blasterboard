@@ -1,0 +1,653 @@
+; ***********************************************************************************
+
+; 	LABS BlasterBoard sound card firmware
+;	Copyright (C) 2021 Jevgenijs Ribalko (LABS)
+
+;	This program is free software: you can redistribute it and/or modify
+;	it under the terms of the GNU General Public License as published by
+;	the Free Software Foundation, either version 3 of the License, or
+;	(at your option) any later version.
+
+;	This program is distributed in the hope that it will be useful,
+;	but WITHOUT ANY WARRANTY; without even the implied warranty of
+;	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+;	GNU General Public License for more details.
+
+;	You should have received a copy of the GNU General Public License
+;	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+; ***********************************************************************************
+    
+; Target: ATmega88AP MCU 
+; Version 2.1    
+; Last revision: 11-07-2021
+; Author: Jevgenijs Ribalko (LABS)
+
+	.include "m88padef.ai"
+	.include "common.ai"
+
+	.cseg
+	.org	0x0000
+
+	rjmp	RESET_vect
+	rjmp	INT0_vect
+	rjmp	INT1_vect
+	rjmp	PCINT0_vect	; PCINT[7:0] = PORTB[7:0]
+	rjmp	PCINT1_vect	; PCINT[14:8] = PORTC[6:0] 
+	rjmp	PCINT2_vect	; PCINT[23:16] = PORTD[7:0]
+	rjmp	WDT_vect	; Watchdog timer
+	rjmp	TIMER2_COMPA_vect
+	rjmp	TIMER2_COMPB_vect
+	rjmp	TIMER2_OVF_vect
+	rjmp	TIMER1_CAPT_vect
+	rjmp	TIMER1_COMPA_vect
+	rjmp	TIMER1_COMPB_vect
+	rjmp	TIMER1_OVF_vect
+	rjmp	TIMER0_COMPA_vect
+	rjmp	TIMER0_COMPB_vect
+	rjmp	TIMER0_OVF_vect
+	rjmp	SPI_STC_vect	; SPI serial transmission complete
+	rjmp	USART_RX_vect	; USART RX complete
+	rjmp	USART_UDRE_vect	; USART data register empty
+	rjmp	USART_TX_vect	; USART TX complete
+	rjmp	ADC_vect	; ADC conversion complete
+	rjmp	EEREADY_vect	; EEPROM ready
+	rjmp	ANALOG_COMP_vect	; Analog comparator
+	rjmp	TWI_vect	; I2C 
+	rjmp	SPM_READY_vect	; Store Program Memory ready
+	
+INT0_vect:
+INT1_vect:
+PCINT0_vect:
+PCINT2_vect:	
+WDT_vect:
+TIMER2_COMPA_vect:
+TIMER2_COMPB_vect:
+TIMER2_OVF_vect:
+TIMER1_CAPT_vect:
+TIMER1_COMPB_vect:
+TIMER1_OVF_vect:
+TIMER0_COMPA_vect:
+TIMER0_COMPB_vect:
+TIMER0_OVF_vect:
+SPI_STC_vect:
+USART_RX_vect:
+USART_UDRE_vect:
+USART_TX_vect:
+ADC_vect:
+EEREADY_vect:
+ANALOG_COMP_vect:
+TWI_vect:
+SPM_READY_vect:
+	reti
+	; NOT REACHED
+	
+	.org	0x200
+	
+	; Command jump table based on disassembled SB 2.0 DSP code
+	; Some commands are totally undocumented and act for unknown purpose
+	; However, I made this list intact with SB2.0 original jump table for compatibility
+	
+Cmd_Table:
+	rjmp	Cmd_00_Empty	; 0x00 
+	rjmp	Cmd_00_Empty	; 0x01
+	rjmp	Cmd_00_Empty	; 0x02
+	rjmp	Cmd_00_Empty	; 0x03
+	rjmp	Cmd_04_DSPStatus	; 0x04 DSP status
+	rjmp	Cmd_04_DSPStatus	; 0x05
+	rjmp	Cmd_04_DSPStatus	; 0x06
+	rjmp	Cmd_04_DSPStatus	; 0x07
+	rjmp	Cmd_08_HaltDSP	; 0x08
+	rjmp	Cmd_08_HaltDSP	; 0x09
+	rjmp	Cmd_08_HaltDSP	; 0x0A 
+	rjmp	Cmd_08_HaltDSP	; 0x0B
+	rjmp	Cmd_08_HaltDSP	; 0x0C 
+	rjmp	Cmd_08_HaltDSP	; 0x0D
+	rjmp	Cmd_08_HaltDSP	; 0x0E 
+	rjmp	Cmd_08_HaltDSP	; 0x0F
+	rjmp	Cmd_10_OutPCMDirect	; 0x10 - Direct output
+	rjmp	Cmd_10_OutPCMDirect	; 0x11
+	rjmp	Cmd_10_OutPCMDirect	; 0x12
+	rjmp	Cmd_10_OutPCMDirect	; 0x13
+	rjmp	Cmd_14_OutPCMSingleDMA	; 0x14 - Start 8-bit PCM single-cycle DMA
+	rjmp	Cmd_14_OutPCMSingleDMA	; 0x15
+	rjmp	Cmd_16_OutADPCM82Single	; 0x16 - 8:2 ADPCM single-cycle DMA
+	rjmp	Cmd_17_OutADPCM82SingleRef	; 0x17 - 8:2 ADPCM single-cycle DMA (ref. byte) 
+	rjmp	Cmd_1C_OutPCMAuto	; 0x18
+	rjmp	Cmd_1C_OutPCMAuto	; 0x19
+	rjmp	DSP_Idle	; 0x1A L0152
+	rjmp	Cmd_1F_OutADPCM82AutoRef	; 0x1B
+	rjmp	Cmd_1C_OutPCMAuto	; 0x1C - Start 8-bit PCM auto-init DMA
+	rjmp	Cmd_1C_OutPCMAuto	; 0x1D
+	rjmp	Cmd_1E_OutADPCM82AutoNoRef	; 0x1E (TB) L0152
+	rjmp	Cmd_1F_OutADPCM82AutoRef	; 0x1F - 8:2 ADPCM auto-init DMA (ref. byte)
+	rjmp	Cmd_20_InPCMDirect	; 0x20 ~ (CODE) Direct PCM input (data out=0x7F)
+	rjmp	Cmd_20_InPCMDirect	; 0x21
+	rjmp	Cmd_20_InPCMDirect	; 0x22 
+	rjmp	Cmd_20_InPCMDirect	; 0x23
+	rjmp	Cmd_24_InPCMSingle	; 0x24 ~ (CODE) Start single-cycle DMA input (data in)
+	rjmp	Cmd_24_InPCMSingle	; 0x25
+	rjmp	Cmd_24_InPCMSingle	; 0x26 SB Pro MIXER: MIDI vol L/R
+	rjmp	Cmd_24_InPCMSingle	; 0x27
+	rjmp	Cmd_2C_InPCMAuto	; 0x28 
+	rjmp	Cmd_2C_InPCMAuto	; 0x29
+	rjmp	Cmd_2C_InPCMAuto	; 0x2A 
+	rjmp	Cmd_2C_InPCMAuto	; 0x2B
+	rjmp	Cmd_2C_InPCMAuto	; 0x2C - Fake auto-init input
+	rjmp	Cmd_2C_InPCMAuto	; 0x2D
+	rjmp	Cmd_2C_InPCMAuto	; 0x2E 
+	rjmp	Cmd_2C_InPCMAuto	; 0x2F
+	rjmp	Cmd_30_MIDI_Poll	; 0x30 ~ (CODE) Polling MIDI input (data out=0)
+	rjmp	Cmd_31_MIDI_Int	; 0x31 ~ (U) Interrupt MIDI input
+	rjmp	Cmd_32	; 0x32 - L0286
+	rjmp	Cmd_33	; 0x33 - L030B
+	rjmp	Cmd_34_UART_MIDI_Poll	; 0x34 ~ (CODE) UART MIDI poll (data in/0) 
+	rjmp	Cmd_35_UART_MIDI_Int	; 0x35 ~ (U) UART interrupt MIDI I/O
+	rjmp	Cmd_36_UART_MIDI_Poll_Time	; 0x36 ~ (CODE) UART MIDI poll /w timestamp (data in/0)
+	rjmp	Cmd_37_UART_MIDI_Int_Time	; 0x37 ~ (U) UART interrupt MIDI I/O w/ timestamp
+	rjmp	Cmd_38_MIDI_Output	; 0x38 ~ (CODE) MIDI output (data in)
+	rjmp	Cmd_38_MIDI_Output	; 0x39
+	rjmp	Cmd_38_MIDI_Output	; 0x3A
+	rjmp	Cmd_38_MIDI_Output	; 0x3B
+	rjmp	Cmd_38_MIDI_Output	; 0x3C
+	rjmp	Cmd_38_MIDI_Output	; 0x3D
+	rjmp	Cmd_38_MIDI_Output	; 0x3E
+	rjmp	Cmd_38_MIDI_Output	; 0x3F
+	rjmp	Cmd_40_SetTimeConst	; 0x40 - Set DMA time constant
+	rjmp	Cmd_40_SetTimeConst	; 0x41 - SB16 set output sampling rate for 0xC0 and 0xC6
+	rjmp	Cmd_40_SetTimeConst	; 0x42
+	rjmp	Cmd_40_SetTimeConst	; 0x43
+	rjmp	Cmd_40_SetTimeConst	; 0x44
+	rjmp	Cmd_40_SetTimeConst	; 0x45
+	rjmp	Cmd_40_SetTimeConst	; 0x46
+	rjmp	Cmd_40_SetTimeConst	; 0x47
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x48 - Set auto-init DMA block size
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x49
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x4A
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x4B
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x4C
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x4D
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x4E
+	rjmp	Cmd_48_SetAutoBlockSize	; 0x4F
+	rjmp	Cmd_50_52_54_56	; 0x50
+	rjmp	Cmd_51_53_55_57	; 0x51
+	rjmp	Cmd_50_52_54_56	; 0x52
+	rjmp	Cmd_51_53_55_57	; 0x53
+	rjmp	Cmd_50_52_54_56	; 0x54
+	rjmp	Cmd_51_53_55_57	; 0x55
+	rjmp	Cmd_50_52_54_56	; 0x56
+	rjmp	Cmd_51_53_55_57	; 0x57
+	rjmp	DSP_Idle	; 0x58	; 58 - 5F in SB2.0 writes data block to DSP RAM 
+	rjmp	DSP_Idle	; 0x59	; keep unimplemented 
+	rjmp	DSP_Idle	; 0x5A
+	rjmp	DSP_Idle	; 0x5B
+	rjmp	DSP_Idle	; 0x5C
+	rjmp	DSP_Idle	; 0x5D
+	rjmp	DSP_Idle	; 0x5E
+	rjmp	DSP_Idle	; 0x5F
+	rjmp	DSP_Idle	; 0x60	; 60 - 63 - Jump to DSP idle
+	rjmp	DSP_Idle	; 0x61
+	rjmp	DSP_Idle	; 0x62
+	rjmp	DSP_Idle	; 0x63
+	rjmp	Cmd_64_to_67_DMA_Status	; 0x64	; 64 - 67 - Get DMA status
+	rjmp	Cmd_64_to_67_DMA_Status	; 0x65
+	rjmp	Cmd_64_to_67_DMA_Status	; 0x66
+	rjmp	Cmd_64_to_67_DMA_Status	; 0x67
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x68
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x69
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x6A
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x6B
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x6C
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x6D
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x6E
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0x6F
+	rjmp	DSP_Idle	; 0x70
+	rjmp	Cmd_7D_OutADPCM84AutoRef	; 0x71
+	rjmp	DSP_Idle	; 0x72
+	rjmp	Cmd_7F_OutADPCM83AutoRef	; 0x73
+	rjmp	Cmd_74_OutADPCM84Single	; 0x74 - 8:4 ADPCM single-cycle DMA
+	rjmp	Cmd_75_OutADPCM84SingleRef	; 0x75 - 8:4 ADPCM single-cycle DMA (ref. byte)
+	rjmp	Cmd_76_OutADPCM83Single	; 0x76 - 8:3 ADPCM single-cycle DMA
+	rjmp	Cmd_77_OutADPCM83SingleRef	; 0x77 - 8:3 ADPCM single-cycle DMA (ref. byte)
+	rjmp	DSP_Idle	; 0x78
+	rjmp	Cmd_7D_OutADPCM84AutoRef	; 0x79
+	rjmp	DSP_Idle	; 0x7A
+	rjmp	Cmd_7F_OutADPCM83AutoRef	; 0x7B
+	rjmp	Cmd_7C_OutADPCM84AutoNoRef	; 0x7C
+	rjmp	Cmd_7D_OutADPCM84AutoRef	; 0x7D - 8:4 ADPCM auto-init (ref. byte)
+	rjmp	Cmd_7E_OutADPCM83AutoNoRef	; 0x7E
+	rjmp	Cmd_7F_OutADPCM83AutoRef	; 0x7F - 8:3 ADPCM auto-init (ref. byte)
+	rjmp	Cmd_80_OutSilence	; 0x80 - Pause DAC for duration in current rate units
+	rjmp	Cmd_80_OutSilence	; 0x81
+	rjmp	Cmd_80_OutSilence	; 0x82
+	rjmp	Cmd_80_OutSilence	; 0x83
+	rjmp	Cmd_80_OutSilence	; 0x84
+	rjmp	Cmd_80_OutSilence	; 0x85
+	rjmp	Cmd_80_OutSilence	; 0x86
+	rjmp	Cmd_80_OutSilence	; 0x87
+	rjmp	Cmd_80_OutSilence	; 0x88
+	rjmp	Cmd_80_OutSilence	; 0x89
+	rjmp	Cmd_80_OutSilence	; 0x8A
+	rjmp	Cmd_80_OutSilence	; 0x8B
+	rjmp	Cmd_80_OutSilence	; 0x8C
+	rjmp	Cmd_80_OutSilence	; 0x8D
+	rjmp	Cmd_80_OutSilence	; 0x8E
+	rjmp	Cmd_80_OutSilence	; 0x8F
+	rjmp	Cmd_90_OutPCMAutoHS	; 0x90 - 8-bit high-speed auto-init DMA output
+	rjmp	Cmd_91_OutPCMSingleHS	; 0x91 - 8-bit high-speed single-cycle DMA output
+	rjmp	Cmd_90_OutPCMAutoHS	; 0x92
+	rjmp	Cmd_91_OutPCMSingleHS	; 0x93
+	rjmp	Cmd_90_OutPCMAutoHS	; 0x94
+	rjmp	Cmd_91_OutPCMSingleHS	; 0x95
+	rjmp	Cmd_90_OutPCMAutoHS	; 0x96
+	rjmp	Cmd_91_OutPCMSingleHS	; 0x97
+	rjmp	Cmd_98_InPCMAutoHS	; 0x98 ~ (U) 8-bit high-speed auto-init DMA input
+	rjmp	Cmd_99_InPCMSingleHS	; 0x99 ~ (U) 8-bit high-speed single-cycle DMA input
+	rjmp	Cmd_98_InPCMAutoHS	; 0x9A
+	rjmp	Cmd_99_InPCMSingleHS	; 0x9B
+	rjmp	Cmd_98_InPCMAutoHS	; 0x9C
+	rjmp	Cmd_99_InPCMSingleHS	; 0x9D
+	rjmp	Cmd_98_InPCMAutoHS	; 0x9E
+	rjmp	Cmd_99_InPCMSingleHS	; 0x9F
+	rjmp	DSP_Idle	; 0xA0
+	rjmp	DSP_Idle	; 0xA1
+	rjmp	DSP_Idle	; 0xA2
+	rjmp	DSP_Idle	; 0xA3
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xA4
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xA5
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xA6
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xA7
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xA8
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xA9
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xAA
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xAB
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xAC
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xAD
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xAE
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xAF
+	rjmp	DSP_Idle	; 0xB0
+	rjmp	DSP_Idle	; 0xB1
+	rjmp	DSP_Idle	; 0xB2
+	rjmp	DSP_Idle	; 0xB3
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xB4
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xB5
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xB6
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xB7
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xB8
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xB9
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xBA
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xBB
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xBC
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xBD
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xBE
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xBF
+	rjmp	Cmd_C0_OutPCMSingleDMA	; 0xC0 - SB16 8-bit signed single cycle output
+	rjmp	DSP_Idle	; 0xC1
+	rjmp	DSP_Idle	; 0xC2
+	rjmp	DSP_Idle	; 0xC3
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xC4
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xC5
+	rjmp	Cmd_C6_OutPCMAuto	; 0xC6 - SB16 8-bit signed auto-init output
+	rjmp	Cmd_64_to_67_DMA_Status	; 0xC7
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xC8
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xC9
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xCA
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xCB
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xCC
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xCD
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xCE
+	rjmp	Cmd_68_to_6F_Halt_DSP_if_DMA_Enabled	; 0xCF
+	rjmp	Cmd_D0_PauseDMA	; 0xD0 - Pause DMA transfer
+	rjmp	Cmd_D1_SpeakerOn	; 0xD1 - Turn speaker ON
+	rjmp	Cmd_D0_PauseDMA	; 0xD2
+	rjmp	Cmd_D3_SpeakerOff	; 0xD3 - Turn speaker OFF
+	rjmp	Cmd_D4_ResumeDMA	; 0xD4 - Continue DMA mode
+	rjmp	Cmd_D4_ResumeDMA	; 0xD5
+	rjmp	Cmd_D4_ResumeDMA	; 0xD6
+	rjmp	Cmd_D4_ResumeDMA	; 0xD7
+	rjmp	Cmd_D8_GetSpeakerStatus	; 0xD8 - Get speaker status
+	rjmp	Cmd_D8_GetSpeakerStatus	; 0xD9
+	rjmp	Cmd_DA_CancelDMA	; 0xDA - Exit 8-bit auto-init DMA mode
+	rjmp	Cmd_DA_CancelDMA	; 0xDB
+	rjmp	Cmd_D4_ResumeDMA	; 0xDC
+	rjmp	Cmd_D4_ResumeDMA	; 0xDD
+	rjmp	Cmd_D4_ResumeDMA	; 0xDE
+	rjmp	Cmd_D4_ResumeDMA	; 0xDF
+	rjmp	Cmd_E0_CheckCommunication	; 0xE0 - -= TB =- Test communication
+	rjmp	Cmd_E1_GetDSPVersion	; 0xE1 - Get DSP version
+
+	rjmp	Cmd_E2_AckDMA 	; 0xE2 - Identify DMA
+			;
+			; This command outputs its response bytes via DMA,
+			; but DMA transfer to host is not implemented in hardware,
+			; so this command cannot be supported.
+			; Because of this, test-sbc.exe cannot playback a test
+			; sample, it just halts.
+			
+	rjmp	Cmd_E3_GetDSPString	; 0xE3 Get DSP Copyright
+	rjmp	Cmd_E4_WriteTestReg	; 0xE4 Write test register
+	rjmp	Cmd_E5_GetFirmwareVersion	; 0xE5 - Get BlasterBoard firmware version
+	rjmp	Cmd_E4_WriteTestReg	; 0xE6
+	rjmp	Cmd_E4_WriteTestReg	; 0xE7
+	rjmp	Cmd_E8_ReadTestReg	; 0xE8 Read test register
+	rjmp	Cmd_E8_ReadTestReg	; 0xE9
+	rjmp	Cmd_E8_ReadTestReg	; 0xEA
+	rjmp	Cmd_E8_ReadTestReg	; 0xEB
+	rjmp	Cmd_E8_ReadTestReg	; 0xEC
+	rjmp	Cmd_E8_ReadTestReg	; 0xED
+	rjmp	Cmd_E8_ReadTestReg 	; 0xEE
+	rjmp	Cmd_E8_ReadTestReg	; 0xEF
+	rjmp	Cmd_F0_StartTestTone	; 0xF0 - BB - Generate DAC test tone
+	rjmp	Cmd_F1_DSPStatus	; 0xF1	; DSP Status
+	rjmp	Cmd_F2_GenerateIRQ	; 0xF2 -= TB =- Generate IRQ now
+	rjmp	Cmd_F2_GenerateIRQ	; 0xF3	
+	rjmp	Cmd_F4_GetDAF4	; 0xF4 
+	rjmp	Cmd_F4_GetDAF4	; 0xF5
+	rjmp	Cmd_F4_GetDAF4	; 0xF6
+	rjmp	Cmd_F4_GetDAF4	; 0xF7
+	rjmp	Cmd_F8_Checksum	; 0xF8 Return firmware checksum (just return 0)
+	rjmp	Cmd_F8_Checksum	; 0xF9
+	rjmp	Cmd_F8_Checksum	; 0xFA
+	rjmp	Cmd_F8_Checksum	; 0xFB	
+	rjmp	Cmd_F8_Checksum	; 0xFC	
+	rjmp	Cmd_F8_Checksum	; 0xFD	
+	rjmp	Cmd_F8_Checksum	; 0xFE
+	rjmp	Cmd_F8_Checksum	; 0xFF
+		
+; ******************************************************************************
+;			READ-ONLY DATA
+; ******************************************************************************
+tri:
+		.db	  0,   8,  16,  24,  32,  40,  48,  56
+		.db	 64,  72,  80,  88,  96, 104, 112, 120
+		.db	128, 136, 144, 152, 160, 168, 176, 184
+		.db	192, 200, 208, 216, 224, 232, 240, 248
+		.db	255, 248, 240, 232, 224, 216, 208, 200
+		.db	192, 184, 176, 168, 160, 152, 144, 136
+		.db	128, 120, 112, 104,  96,  88,  80,  72
+		.db	 64,  56,  48,  40,  32,  24,  16,   8
+		.db	  0,   8,  16,  24,  32,  40,  48,  56
+		.db	 64,  72,  80,  88,  96, 104, 112, 120
+		.db	128, 136, 144, 152, 160, 168, 176, 184
+		.db	192, 200, 208, 216, 224, 232, 240, 248
+		.db	255, 248, 240, 232, 224, 216, 208, 200
+		.db	192, 184, 176, 168, 160, 152, 144, 136
+		.db	128, 120, 112, 104,  96,  88,  80,  72
+		.db	 64,  56,  48,  40,  32,  24,  16,   8
+		.db	  0,   8,  16,  24,  32,  40,  48,  56
+		.db	 64,  72,  80,  88,  96, 104, 112, 120
+		.db	128, 136, 144, 152, 160, 168, 176, 184
+		.db	192, 200, 208, 216, 224, 232, 240, 248
+		.db	255, 248, 240, 232, 224, 216, 208, 200
+		.db	192, 184, 176, 168, 160, 152, 144, 136
+		.db	128, 120, 112, 104,  96,  88,  80,  72
+		.db	 64,  56,  48,  40,  32,  24,  16,   8
+		.db	  0,   8,  16,  24,  32,  40,  48,  56
+		.db	 64,  72,  80,  88,  96, 104, 112, 120
+		.db	128, 136, 144, 152, 160, 168, 176, 184
+		.db	192, 200, 208, 216, 224, 232, 240, 248
+		.db	255, 248, 240, 232, 224, 216, 208, 200
+		.db	192, 184, 176, 168, 160, 152, 144, 136
+		.db	128, 120, 112, 104,  96,  88,  80,  72
+		.db	 64,  56,  48,  40,  32,  24,  16,   8
+		
+dsp_string:
+		.db	"BlasterBoard ", 0
+		
+; ******************************************************************************
+; 				FUNCTIONS
+; ******************************************************************************
+	
+; ------------------------------------------------------------------------------
+;	DSP_Write
+;	Copy byte  from A to external 74HC574 register
+; ------------------------------------------------------------------------------
+DSP_Write:
+	; Wait for RDST pin to become 0
+	sbic	PINC, RDST_PIN
+	rjmp	DSP_Write
+	
+	out	PORTD, ZEROES
+	
+	; Set PORTD to output	
+	out	DDRD, ONES	
+	out	PORTD, A	; Set data on PORTD
+	cbi	PORTC, WRR_PIN
+	sbi	PORTC, WRR_PIN	; Store data from PORTD to 574 on rising edge
+	
+	out	PORTD, ONES	; Pull-ups
+	; Set PORTD to input (default state)	
+	out	DDRD, ZEROES
+	
+#ifdef UART_ENABLE
+	push	A
+	mov	A, ONES	; 0xFF prefix for outgoing data
+	rcall	UART_PutChar
+	pop	A
+	rcall	UART_PutChar
+#endif
+	ret
+	; NOT REACHED
+	
+; ------------------------------------------------------------------------------
+;	DSP_Read
+;	Copy byte value from external 74HC574 register to A
+; ------------------------------------------------------------------------------
+DSP_Read:
+	; Wait for WRST pin to become 1 (data received)
+	sbis	PINC, WRST_PIN
+	rjmp	DSP_Read
+
+	; Read from 74HC574 register =============================================
+	cbi	PORTC, RDR_PIN	; Clear /OE of 574
+	nop	; Let data to set up
+	nop
+	nop
+	
+	in	A, PIND	; Read byte form PORTD pins
+	sbi	PORTC, RDR_PIN	; Set /OE back to idle
+	; ========================================================================
+
+#ifdef UART_ENABLE	
+	push	A
+	ldi	A, 0xDD	; 0xDD prefix for incoming data
+	rcall	UART_PutChar
+	pop	A
+	rcall	UART_PutChar
+#endif
+	ret
+	; NOT REACHED
+
+
+; ******************************************************************************
+;			INCLUDES
+; ******************************************************************************
+#ifdef UART_ENABLE	
+	.include "uart.aa"
+#endif
+	.include "dac.aa"
+	.include "cmd.aa"
+			
+; ******************************************************************************
+;			MCU POWER-UP ENTRY POINT
+; ******************************************************************************
+RESET_vect:
+
+	; --=== POWER UP ==--
+
+	; Setup predefined registers
+	clr	ZEROES
+	ser	A
+	mov	ONES, A
+	
+	; Switch off unused peripherals
+	ldi	A, (1<<PRTWI) | (1<<PRTIM2) | (1<<PRTIM0) | (1<<PRADC) | (1<<PRUSART0)
+	sts	PRR, A
+	
+	; Init RESET pin interrupt handler
+	sbr	A, (1<<PCIE1)
+	sts	PCICR, A	
+	sbr	A, (1<<PCINT14)
+	sts	PCMSK1, A
+
+	; PORTB
+	;	TX_PIN - (output) software USART TX
+	;	IRQ_PIN - (output) trigger and latch the jumper-selected ISA IRQ line on low-to-high
+	;	SS_PIN - SPI
+	;	MOSI_PIN - SPI
+	;	SCK_PIN - SPI
+	ldi	A, (1<<TX_PIN) | (0<<IRQ_PIN) 
+	out	PORTB, A
+	ldi	A, (1<<IRQ_PIN) | (1<<TX_PIN) | (1<<SS_PIN) | (1<<MOSI_PIN) | (1<<SCK_PIN) ; Outs
+	out	DDRB, A
+
+	; PORTC
+	;	RDR_PIN - (output) read a byte from input register 74HC574 on low-to-high
+	;	WRR_PIN - (output) write a byte to output register 74HC574 on low-to-high
+	;	RDST_PIN - (input) indicates if the output register is empty (=0) for wtiting data
+	;	WRST_PIN - (input) indicates if the input register has data (=1) for reading
+	;	DMAREQ_PIN - (output) makes a DMA request on the ISA bus on low-to-high
+	;	RESET_PIN - (input) software or hardware reset 
+	ldi	A, (1<<RDR_PIN) | (1<<WRR_PIN) | (0<<RDST_PIN) | (0<<WRST_PIN) | (1<<RDDMA_PIN) | (1<<DMAREQ_PIN) | (0<<RESET_PIN)
+	out	DDRC, A
+
+	; Init SPI
+	ldi	A, (1<<SPE) | (1<<MSTR)
+	out	SPCR, A
+	out	SPSR, ZEROES
+
+	; Init DAC: Slowly sets middle voltage 0x80
+	
+	sbi	DSPSR, SPKRF	
+	ldi 	A, 0
+init_dac_loop:
+	mov	DAC_VAL, A
+	rcall	DAC_Write
+	rcall	Some_Delay
+	inc	A
+	cpi	A, 0x80
+	brne	init_dac_loop
+	cbi	DSPSR, SPKRF	
+	
+	rjmp	Soft_Reset
+	; NOT REACHED
+	
+; ******************************************************************************
+;				PCINT14 (PC6 pin) RESET HANDLER
+;				Called when writing to 2x6h port
+; ******************************************************************************
+PCINT1_vect:
+
+	; Interrupts disabled
+
+	; This executes on RESET (PC6) pin interrupt 
+	sbic	PINC, RESET_PIN
+	reti	; Return on low-to-high, enabling interrupts
+
+	; Do reset on high-to-low 
+	;	|
+	;	V
+	
+Soft_Reset:
+
+	; PORTC
+	; Do it while /RESET is low, thus /R pins of the flip-flops are low
+	ldi 	A, (1<<RDR_PIN) | (1<<WRR_PIN) | (1<<RDST_PIN) | (1<<WRST_PIN) | (1<<RDDMA_PIN) | (0<<DMAREQ_PIN) | (1<<RESET_PIN)
+	out	PORTC, A
+
+	; Reset stack
+	ldi	A, low(RAMEND)
+	out	SPL, A
+	ldi	A, high(RAMEND)
+	out	SPH, A
+
+	; Stop any DMA operations
+	rcall	T1_Stop
+	rcall	T1_Reset	
+	
+	; Clear status register
+	out	DSPSR, ZEROES
+	sbi	DSPSR, REFF		; Prevent 1st sample click
+	
+	; Load idle value do DAC
+	;ldi	DAC_VAL, 0x80
+	rcall	DAC_Write
+
+_reset_wait:
+	sbis	PINC, RESET_PIN	; Wait for reset signal to go high
+	rjmp	_reset_wait
+
+_reset_wait_reg:
+	sbic	PINC, RDST_PIN	; Wait for 74HC574 reg to become empty
+	rjmp	_reset_wait_reg
+	
+	; PORTD PD0-PD7 - 8-bit data I/O port between the MCU and the host
+	out	DDRD, ONES		; Set PORTD to output
+	ldi	A, 0xAA	
+
+	cbi	PORTC, WRR_PIN
+	out	PORTD, A		; Output reset singature 0xAA
+	sbi	PORTC, WRR_PIN
+	
+	out	DDRD, ZEROES	; Set PORTD to input (default state)
+	out	PORTD, ONES	; Pull-ups
+	
+#ifdef UART_ENABLE
+	ldi	A, 0xAA
+	rcall	UART_PutChar
+#endif
+
+	sei	; Enable interrupts
+	
+	; FALLTHROUGH
+
+; Wait for incoming command
+DSP_Idle:
+	sbis	PINC, WRST_PIN
+	rjmp	DSP_Idle
+
+	; Always stop timer 1 on new incoming command, even if DMA is running
+	cli
+	rcall	T1_Stop	
+	sei
+	
+	; Read a byte from 74HC574 register 
+	cbi	PORTC, RDR_PIN	; Clear /OE of 574
+	nop			; Let the data to set up
+	nop
+	nop
+	
+	in	A, PIND		; Read data
+	sbi	PORTC, RDR_PIN	; Set /OE
+
+#ifdef UART_ENABLE	
+	push	A
+	ldi	A, 0xCC	; 0xCC prefix for incoming command
+	rcall	UART_PutChar
+	pop	A
+	rcall	UART_PutChar
+#endif
+	; A = command number
+
+	; Calculate corresponding vector and jump to it
+	ldi	ZH, 0x02
+	mov	ZL, A
+	;lsl	ZL
+	;rol	ZH
+
+	ijmp
+	; NOT REACHED
+
+Some_Delay:
+; Wait 
+	ldi 	C, 32
+	ldi	B, 0
+delay_loop:	
+	dec	B
+	cpi	B, 0
+	brne	delay_loop
+	dec	C
+	cpi	C, 0
+	brne	delay_loop
+	ret
+	; NOT REACHED
